@@ -1,0 +1,199 @@
+import RPi.GPIO as GPIO
+import time
+from time import sleep
+from ultralytics import YOLO
+import cv2
+import math
+import Adafruit_DHT
+import requests
+
+GPIO.setwarnings(False)
+GPIO.setmode(GPIO.BCM)
+
+DHT_PIN = 17
+GPIO_TRIGGER = 25
+GPIO_ECHO = 24
+IN1 = 19
+IN2 = 16
+IN3 = 26
+IN4 = 20
+
+GPIO.setup(14,GPIO.IN)
+
+
+GPIO.setup(GPIO_TRIGGER, GPIO.OUT)
+GPIO.setup(GPIO_ECHO, GPIO.IN)
+GPIO.setup(IN1, GPIO.OUT)
+GPIO.setup(IN2, GPIO.OUT)
+GPIO.setup(IN3, GPIO.OUT)
+GPIO.setup(IN4, GPIO.OUT)
+SENSOR_TYPE = Adafruit_DHT.DHT11
+
+lat="0.0000"
+lng="0.0000"
+cap = cv2.VideoCapture(0)
+cap.set(3, 640)
+cap.set(4, 480)
+Gas=0
+# model
+model = YOLO(r"yolov8n.pt")
+
+# object classes
+classNames = ['Person', ' Normal']
+
+def forward():
+    GPIO.output(IN1, GPIO.LOW)
+    GPIO.output(IN2, GPIO.HIGH)
+    GPIO.output(IN3, GPIO.LOW)
+    GPIO.output(IN4, GPIO.HIGH)
+    print("Vehicle is forward")
+
+def backward():
+    GPIO.output(IN1, GPIO.HIGH)
+    GPIO.output(IN2, GPIO.LOW)
+    GPIO.output(IN3, GPIO.HIGH)
+    GPIO.output(IN4, GPIO.LOW)
+    print("Vehicle is backward")
+    
+def left():
+    GPIO.output(IN1, GPIO.LOW)
+    GPIO.output(IN2, GPIO.HIGH)
+    GPIO.output(IN3, GPIO.LOW)
+    GPIO.output(IN4, GPIO.LOW)
+    sleep(2)
+    GPIO.output(IN1, GPIO.LOW)
+    GPIO.output(IN2, GPIO.LOW)
+    GPIO.output(IN3, GPIO.LOW)
+    GPIO.output(IN4, GPIO.LOW)
+    sleep(2)
+    print("Vehicle is left")
+
+def right():
+    GPIO.output(IN1, GPIO.LOW)
+    GPIO.output(IN2, GPIO.LOW)
+    GPIO.output(IN3, GPIO.LOW)
+    GPIO.output(IN4, GPIO.HIGH)
+    sleep(2)
+    GPIO.output(IN1, GPIO.LOW)
+    GPIO.output(IN2, GPIO.LOW)
+    GPIO.output(IN3, GPIO.LOW)
+    GPIO.output(IN4, GPIO.LOW)
+    sleep(2)
+    print("Vehicle is right")
+
+def stop():
+    GPIO.output(IN1, GPIO.LOW)
+    GPIO.output(IN2, GPIO.LOW)
+    GPIO.output(IN3, GPIO.LOW)
+    GPIO.output(IN4, GPIO.LOW)
+    print("Vehicle is Stop")
+ 
+
+ 
+def load_json():
+    
+    response = requests.get('https://iotcloud22.in/3269_human/light.json')
+    if response.status_code == 200:
+        data = response.json()
+        robot = data.get('robot')  
+        if robot == "stop":
+            stop()
+        elif robot == "forward":
+            forward()
+        elif robot == "backward":
+            backward()
+        elif robot == "left":
+            left()
+        elif robot == "right":
+            right()
+        
+    time.sleep(1)
+
+def send_db():
+    Temp=str(temp)+"°C"
+    Hum=str(hum)+"%"
+    Dis=str(Dist)
+    Ip=str(name)
+    Polls=str(poll)
+    print(Temp,Hum,Dis,Ip,Polls)
+    url='https://iotcloud22.in/3269_human//post_value.php'
+    data = {
+    "value1": Temp,
+    "value2": Hum,
+    "value3": Dis,
+    "value4": Ip,
+    "value5": Polls
+    }
+    response = requests.post(url, data=data)
+    print("HTTP Response:", response.status_code)
+
+
+def distance():
+    GPIO.output(GPIO_TRIGGER, True)
+    time.sleep(0.00001)
+    GPIO.output(GPIO_TRIGGER, False)
+ 
+    StartTime = time.time()
+    StopTime = time.time()
+    while GPIO.input(GPIO_ECHO) == 0:
+        StartTime = time.time()
+    while GPIO.input(GPIO_ECHO) == 1:
+        StopTime = time.time()
+        TimeElapsed = StopTime - StartTime
+        distance = (TimeElapsed * 34300) / 2
+    return distance
+
+while True:
+    global Dist,nm,temp,hum
+    load_json()
+    dist = distance()
+    Dist="{:.2f}".format(dist)
+    print("Distance : ",Dist)
+    poll=GPIO.input(14)
+    if poll==0:
+        poll="Normal"
+        print("Pollution : ",poll)
+    else:
+        poll="Harmfull"
+        print("Pollution : ",poll)
+    hum, temp = Adafruit_DHT.read_retry(SENSOR_TYPE, DHT_PIN)
+#     t="{:.2f}".format(temp)+"°C"
+#     h="{:.2f}".format(hum)+"%"
+    print("Temp : ",temp ,"Hum : ",hum)
+    success, img = cap.read()
+    results = model(img, stream=True)
+
+    # coordinates
+    for r in results:
+        boxes = r.boxes
+
+        for box in boxes:
+            x1, y1, x2, y2 = box.xyxy[0]
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            
+            confidence = math.ceil((box.conf[0]*100))/100
+            print("Confidence --->",confidence)
+            global name
+            name="Not Detected"
+            if confidence > 0.70:
+                cls = int(box.cls[0])
+                if cls == 0:  # Check if the detected class is "Person"
+                    
+                    name = classNames[cls]
+                    print(name, '~')
+                    
+                    org = [x1, y1]
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    fontScale = 1
+                    color = (0, 0, 255)
+                    thickness = 2
+                    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.putText(img, name, org, font, fontScale, color, thickness)
+
+        cv2.imshow('Webcam', img)
+        send_db()
+    if cv2.waitKey(1) == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
