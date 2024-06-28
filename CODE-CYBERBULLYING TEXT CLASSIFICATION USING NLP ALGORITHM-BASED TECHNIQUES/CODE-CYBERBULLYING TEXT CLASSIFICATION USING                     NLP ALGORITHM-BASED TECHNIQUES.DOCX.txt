@@ -1,0 +1,129 @@
+DEPLOYMENT CODE:
+from django.shortcuts import render, redirect
+from . models import UserPersonalModel
+from . forms import UserRegisterForm, UserPersonalForm
+from django.contrib.auth import authenticate, login,logout
+from django.contrib import messages
+import numpy as np
+
+import tensorflow 
+import pandas as pd
+import numpy as np
+from sklearn.preprocessing import LabelEncoder
+from keras.preprocessing.text import Tokenizer
+from keras.preprocessing.sequence import pad_sequences
+from keras.utils import to_categorical
+from sklearn.model_selection import train_test_split
+
+
+
+def Landing_1(request):
+    return render(request, '1_Landing.html')
+
+def Register_2(request):
+    form = UserRegisterForm()
+    if request.method =='POST':
+        form = UserRegisterForm(request.POST)
+        if form.is_valid():
+            form.save()
+            user = form.cleaned_data.get('username')
+            messages.success(request, 'Account was successfully created. ' + user)
+            return redirect('Login_3')
+
+    context = {'form':form}
+    return render(request, '2_Register.html', context)
+
+
+def Login_3(request):
+    if request.method =='POST':
+        username = request.POST.get('username')
+        password = request.POST.get('password')
+
+        user = authenticate(username=username, password=password)
+
+        if user is not None:
+            login(request, user)
+            return redirect('Home_4')
+        else:
+            messages.info(request, 'Username OR Password incorrect')
+
+    context = {}
+    return render(request,'3_Login.html', context)
+
+def Home_4(request):
+    return render(request, '4_Home.html')
+
+def Teamates_5(request):
+    return render(request,'5_Teamates.html')
+
+def Domain_Result_6(request):
+    return render(request,'6_Domain_Result.html')
+
+def Problem_Statement_7(request):
+    return render(request,'7_Problem_Statement.html')
+
+def Per_Info_8(request):
+    if request.method == 'POST':
+        fieldss = ['firstname','lastname','age','address','phone','city','state','country']
+        form = UserPersonalForm(request.POST)
+        if form.is_valid():
+            print('Saving data in Form')
+            form.save()
+        return render(request, '4_Home.html', {'form':form})
+    else:
+        print('Else working')
+        form = UserPersonalForm(request.POST)    
+        return render(request, '8_Per_Info.html', {'form':form})
+    
+
+model1 = tensorflow.keras.models.load_model('C:/Users/SPIRO25/Desktop/ITPRN06 - CYBER BULLYING/DEPLOYMENT/PROJECT/APP/LSTM.h5')
+    models = UserPersonalModel.objects.all()
+    return render(request, '10_Per_Database.html', {'models':models})
+
+def Logout(request):
+    logout(request)
+    return redirect('Landing_1')
+
+import pandas as pd
+import numpy as np
+Data = pd.read_csv('CYBER.csv', encoding="latin-1")
+Data.head()
+Data.tail()
+Data['cyberbullying_type'].unique()
+Data.drop(Data.index[Data['cyberbullying_type'] == 'other_cyberbullying'], inplace=True)
+Data.drop(Data.index[Data['cyberbullying_type'] == 'gender'], inplace=True)
+Data['cyberbullying_type'].value_counts()
+Data['tweet_text'] = Data['tweet_text'].apply(lambda x: x.lower() if pd.notna(x) else "")
+from sklearn.preprocessing import LabelEncoder
+
+label_encoder = LabelEncoder()
+Data['cyberbullying_type'] = label_encoder.fit_transform(Data['cyberbullying_type'])
+num_classes = len(label_encoder.classes_) 
+x = Data['tweet_text']
+y = Data['cyberbullying_type']
+from tensorflow.keras.utils import to_categorical
+
+y = to_categorical(y, num_classes=num_classes)
+from sklearn.model_selection import train_test_split
+
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2, random_state=42)
+max_words = 10000  
+max_sequence_length = 100
+from tensorflow.keras.preprocessing.text import Tokenizer
+
+tokenizer = Tokenizer(num_words=max_words)
+tokenizer.fit_on_texts(x_train)
+x_train_sequences = tokenizer.texts_to_sequences(x_train)
+x_test_sequences = tokenizer.texts_to_sequences(x_test)
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+x_train_padded = pad_sequences(x_train_sequences, maxlen=max_sequence_length)
+x_test_padded = pad_sequences(x_test_sequences, maxlen=max_sequence_length)
+embedding_dim = 100  
+RNN_units = 128
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Embedding
+from tensorflow.keras.layers import Bidirectional
+from tensorflow.keras.layers import SimpleRNN
+from tensorflow.keras.layers import Dense
+model = Sequential()
