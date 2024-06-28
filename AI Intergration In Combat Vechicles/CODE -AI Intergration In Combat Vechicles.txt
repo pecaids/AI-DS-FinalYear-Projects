@@ -1,0 +1,214 @@
+﻿import cv2
+import numpy as np
+import os
+from datetime import  datetime
+import face_recognition
+import Adafruit_IO
+import paho.mqtt.client as mqtt
+import serial
+import pynmea2
+import random
+from twilio.rest import Client
+cap = cv2.VideoCapture(0)
+
+
+ADAFRUIT_IO_USERNAME = "MILITRYROBOT"
+ADAFRUIT_IO_KEY = "aio_HLBY931FclrTuMWwZ4d2aseBq2lc"
+FEED_NAME = "CONTROL"
+FEED_NAME1 = "DATA"
+
+
+# Twilio credentials
+TWILIO_ACCOUNT_SID = 'AC7b2674999c6ffb6835bc5cdced8d8a00'
+TWILIO_AUTH_TOKEN = '78e83aa19675ede9606c0efa53d24b43'
+TWILIO_PHONE_NUMBER = '+17867583571'
+RECIPIENT_PHONE_NUMBER = '+91 99406 89505'
+ser = serial.Serial("/dev/ttyUSB0", baudrate=9600, timeout=1)
+data = serial.Serial("/dev/ttyAMA0", baudrate=9600, timeout=1)
+
+
+path = 'data'
+stdImg = []
+stdName = []
+myList = os.listdir(path)
+
+
+for cl in myList:
+    curimg = cv2.imread(f'{path}/{cl}')
+    stdImg.append(curimg)
+    stdName.append(os.path.splitext(cl)[0])
+    
+studentName = [name.upper() for name in stdName]
+
+
+print('Student Names in the List is :',studentName)
+
+
+s1 = 0
+s2 = 0
+s3 = 0
+s4 = 0
+s5 = 0
+
+
+stdname_copy = studentName.copy()
+
+
+def gps():
+    dataout = pynmea2.NMEAStreamReader()
+    newdata = data.readline()
+    if '$GPRMC' in str(newdata):
+        print(newdata.decode('utf-8'))
+        newmsg = pynmea2.parse(newdata.decode('utf-8'))
+        #lat = newmsg.latitude
+        #lng = newmsg.longitude
+        #gps_data1 = f"Latitude={lat} and Longitude={lng}"
+        print(gps_data)
+        return gps_data
+
+
+# Function to send SMS
+def send_sms(message):
+    # Initialize Twilio client
+    client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+
+    # Send SMS
+    message = client.messages.create(
+        body=message,
+        from_=TWILIO_PHONE_NUMBER,
+        to=RECIPIENT_PHONE_NUMBER
+    )
+
+
+    print("SMS sent with SID:", message.sid)
+
+
+def on_message(client, userdata, msg):
+    global confirmation_received, confirmation_timestamp, confirmations_received
+    payload = msg.payload.decode("utf-8")
+    if payload in ['F', 'B', 'R', 'L', 'S']:
+        print(f"Received: {payload}")
+        receive_payload(payload)
+
+
+def receive_payload(payload):
+        if payload == 'F':
+                ser.write(b'F')
+                print('F')
+                
+        if payload == 'B':
+                ser.write(b'E')
+                print('E')
+                
+        if payload == 'R':
+                ser.write(b'R')
+                print('R')
+                
+        if payload == 'L':
+                ser.write(b'L')
+                print('L')
+                
+if payload == 'S':
+                ser.write(b'S')
+                print('S')
+
+
+def resize(img, size) :
+    width = int(img.shape[1]*size)
+    height = int(img.shape[0] * size)
+    dimension = (width, height)
+    return cv2.resize(img, dimension, interpolation= cv2.INTER_AREA)
+
+
+def findEncoding(images) :
+    imgEncodings = []
+    for img in images :
+        img = resize(img, 0.50)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        encodeimg = face_recognition.face_encodings(img)[0]
+        imgEncodings.append(encodeimg)
+    return imgEncodings
+
+
+EncodeList = findEncoding(stdImg)
+
+
+attendance_List = []
+ids = 1
+
+
+client = mqtt.Client()
+client.username_pw_set(ADAFRUIT_IO_USERNAME, ADAFRUIT_IO_KEY)
+client.on_message = on_message
+client.connect("io.adafruit.com", 1883, 60)
+client.subscribe(f"{ADAFRUIT_IO_USERNAME}/feeds/{FEED_NAME}")
+
+
+# Start the MQTT loop
+client.loop_start()
+
+
+while True :
+    success, frame = cap.read()
+    Smaller_frames = cv2.resize(frame, (0,0), None, 0.25, 0.25)
+
+
+    facesInFrame = face_recognition.face_locations(Smaller_frames)
+    encodeFacesInFrame = face_recognition.face_encodings(Smaller_frames, facesInFrame)
+
+
+    for encodeFace, faceloc in zip(encodeFacesInFrame, facesInFrame) :
+        matches = face_recognition.compare_faces(EncodeList, encodeFace)
+        facedis = face_recognition.face_distance(EncodeList, encodeFace)
+        matchIndex = np.argmin(facedis)
+
+
+        if matches[matchIndex] :
+            name = studentName[matchIndex].upper()
+            y1, x2, y2, x1 = faceloc
+            y1, x2, y2, x1 = y1*4, x2*4, y2*4, x1*4
+           cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 3)
+            cv2.rectangle(frame, (x1, y2-25), (x2, y2), (0, 255, 0), cv2.FILLED)
+            cv2.putText(frame, name, (x1+6, y2-6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+            if name == 'SANTHOSH':            
+                s1 += 1
+                if s1 >= 10:
+                    print('SANTHOSH is detected')
+                    s1 = 0
+                    s2 = 0
+                    s3 = 0
+                    s4 = 0
+                    s5 = 0
+                    ser.write(b'B')
+                    
+            if name == 'POOVARASAN':            
+                s1 += 1
+                if s1 >= 10:
+                    print('POOVARASAN is detected')
+                    s1 = 0
+                    s2 = 0
+                    s3 = 0
+                    s4 = 0
+                    s5 = 0
+                    ser.write(b'B')
+         else:
+            y1, x2, y2, x1 = faceloc
+            y1, x2, y2, x1 = y1*4, x2*4, y2*4, x1*4
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 3)
+            cv2.putText(frame, 'INTRUDER', (x1+6, y2-6), cv2.FONT_HERSHEY_COMPLEX, 1, (255, 255, 255), 2)
+            ser.write(b'A')
+            message = "INTRUDER DETECETD"
+            send_sms(message)
+            gps_data = "Latitude = 13.0489049, Longitude = 79.9436283" #if you want real location comment this
+            send_sms(gps_data) # comment this
+            #gps_data = str(gps()) #un comment this
+            #send_sms(gps_data) #un comment this
+            print('INTRUDER')
+            
+    cv2.imshow('Face Attendance System',frame)
+    k = cv2.waitKey(1)
+    if k == 27:
+        break
+cap.release()
+cv2.destroyAllWindows()
