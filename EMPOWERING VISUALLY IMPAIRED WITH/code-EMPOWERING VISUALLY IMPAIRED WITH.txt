@@ -1,0 +1,188 @@
+from django.shortcuts import render, redirect
+from . models import UserPersonalModel
+from . forms import UserPersonalForm, UserRegisterForm
+from django.contrib.auth import authenticate, login,logout
+from django.contrib import messages
+import numpy as np
+import joblib
+import pyttsx3
+
+def Landing_1(request):
+    return render(request, '1_Landing.html')
+
+def Register_2(request):
+    form = UserRegisterForm()
+    if request.method =='POST':
+        form = UserRegisterForm(request.POST)
+        if form.is_valid():
+            form.save()
+            user = form.cleaned_data.get('username')
+            messages.success(request, 'Account was successfully created. ' + user)
+            return redirect('Login_3')
+
+    context = {'form':form}
+    return render(request, '2_Register.html', context)
+
+
+def Login_3(request):
+    if request.method =='POST':
+        username = request.POST.get('username')
+        password = request.POST.get('password')
+
+        user = authenticate(username=username, password=password)
+
+        if user is not None:
+            login(request, user)
+            return redirect('Home_4')
+        else:
+            messages.info(request, 'Username OR Password incorrect')
+
+    context = {}
+    return render(request,'3_Login.html', context)
+
+def Home_4(request):
+    return render(request, '4_Home.html')
+
+def Teamates_5(request):
+    return render(request,'5_Teamates.html')
+
+def Domain_Result_6(request):
+    return render(request,'6_Domain_Result.html')
+
+def Problem_Statement_7(request):
+    return render(request,'7_Problem_Statement.html')
+    
+
+def Per_Info_8(request):
+    if request.method == 'POST':
+        fieldss = ['firstname','lastname','age','address','phone','city','state','country']
+        form = UserPersonalForm(request.POST)
+        if form.is_valid():
+            print('Saving data in Form')
+            form.save()
+        return render(request, '4_Home.html', {'form':form})
+    else:
+        print('Else working')
+        form = UserPersonalForm(request.POST)    
+        return render(request, '8_Per_Info.html', {'form':form})
+    
+    
+from django.shortcuts import render
+from keras.models import load_model
+import cv2  
+import numpy as np
+
+model = load_model("C:/Users/rakna/Music/RUPIES/DEPLOYMENT_1/PROJECT/APP/keras_model.h5")
+class_names = open("C:/Users/rakna/Music/RUPIES/DEPLOYMENT_1/PROJECT/APP/labels.txt", "r").readlines()
+
+
+
+def Deploy_9(request):    
+    
+    if request.method == 'POST':       
+
+        camera = cv2.VideoCapture(1)
+        
+        while True:
+            ret, img = camera.read()
+            image = cv2.resize(img, (224, 224), interpolation=cv2.INTER_AREA)
+            image = np.asarray(image, dtype=np.float32).reshape(1, 224, 224, 3)
+            image = (image / 127.5) - 1
+            prediction = model.predict(image)
+            index = np.argmax(prediction)
+            class_name = class_names[index]
+            confidence_score = prediction[0][index]
+            score = str(np.round(confidence_score * 100))[:-2]
+            sc = int(score)
+            print(sc)
+            
+            if sc>=98:
+                print("Class:", class_name[2:], end="")
+                cv2.putText(img, class_name[2:-1], (50,50), cv2.FONT_HERSHEY_SIMPLEX, 1, (222, 235, 52), 2)
+                
+                if class_name[2:-1] == '50':
+                                  
+                        
+                    cv2.putText(img, '50 DETECTED', (50,50), cv2.FONT_HERSHEY_SIMPLEX, 2, (222, 235, 52), 3)
+                    print("The person with 50 DETECTED")
+                    engine = pyttsx3.init()
+                    k = '50 DETECTED'
+                    engine.say(k)
+                    engine.runAndWait()
+                    
+
+                if class_name[2:-1] == '100':
+                    
+                    cv2.putText(img, '100 DETECTED', (50,50), cv2.FONT_HERSHEY_SIMPLEX, 2, (222, 235, 52), 3)
+                    print("100 DETECTED")
+
+                    engine = pyttsx3.init()
+                    k = '100 DETECTED'
+                    engine.say(k)
+                    engine.runAndWait()
+
+                    
+                        
+                if class_name[2:-1] == '200':
+                   
+                    cv2.putText(img, '200 DETECTED', (50,50), cv2.FONT_HERSHEY_SIMPLEX, 2, (222, 235, 52), 3)
+                    print("200 DETECTED")
+
+                    engine = pyttsx3.init()
+                    k = '200 DETECTED'
+                    engine.say(k)
+                    engine.runAndWait()                   
+                        
+                if class_name[2:-1] == '500':
+                   
+                    cv2.putText(img, '500 DETECTED', (50,50), cv2.FONT_HERSHEY_SIMPLEX, 2, (222, 235, 52), 3)
+                    print("500 DETECTED")
+                    engine = pyttsx3.init()
+                    k = '500 DETECTED'
+                    engine.say(k)
+                    engine.runAndWait()
+                    
+                            
+                if class_name[2:-1] == 'other_object':
+                    
+                    cv2.putText(img, 'other_object DETECTED', (50,50), cv2.FONT_HERSHEY_SIMPLEX, 2, (222, 235, 52), 3)
+                    print("other_object DETECTED")
+                    engine = pyttsx3.init()
+                    k = 'other_object DETECTED'
+                    engine.say(k)
+                    engine.runAndWait()
+                   
+                else:
+                    print('No Data')
+
+                
+            
+            else:
+                
+                print('No Data')
+                
+
+            cv2.imshow("Webcam", img)
+            
+  
+            keyboard_input = cv2.waitKey(1)
+
+
+            if keyboard_input == 27:
+                break
+
+        camera.release()
+        cv2.destroyAllWindows()
+
+        return render(request, '9_Deploy.html', {"PREDICTION":cv2.imshow("Webcam", img)})
+    
+    else:
+        return render(request, '9_Deploy.html')
+        
+def Per_Database_10(request):
+    models = UserPersonalModel.objects.all()
+    return render(request, '10_Per_Database.html', {'models':models})
+
+def Logout(request):
+    logout(request)
+    return redirect('Login_3')
