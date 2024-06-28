@@ -1,0 +1,428 @@
+import os
+import cv2
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras import layers
+# Set dataset path
+dataset_path = r"C:\Users\Narayana murthy\PycharmProjects\pythonProject3\5y9wdsg2zt-2\archive (4)"
+# Define classes
+classes = ["Negative", "Positive"]
+# Data loading
+images = []
+labels = []
+for i, cls in enumerate(classes):
+    class_path = os.path.join(dataset_path, cls)
+    for image_name in os.listdir(class_path):
+        image_path = os.path.join(class_path, image_name)
+        image = cv2.imread(image_path)
+        image = cv2.resize(image, (32, 32))  # Resize the image to 32x32
+        images.append(image)
+        labels.append(i)  # Assigning label based on class index
+
+x_train = np.array(images)
+y_train = np.array(labels)
+# Display shape of loaded data
+print(f"x_train shape: {x_train.shape} - y_train shape: {y_train.shape}")
+# Configure hyperparameters
+learning_rate = 0.001
+batch_size = 256
+num_epochs = 10  # For real training, use num_epochs=100. 10 is a test value
+image_size = 72  # We'll resize input images to this size
+patch_size = 6  # Size of the patches to be extracted from the input images
+num_patches = (image_size // patch_size) ** 2
+projection_dim = 64
+num_heads = 4
+transformer_units = [
+    projection_dim * 2,
+    projection_dim,
+]  # Size of the transformer layers
+transformer_layers = 8
+mlp_head_units = [
+    2048,
+    1024,
+]  # Size of the dense layers of the final classifier
+# Use data augmentation
+data_augmentation = tf.keras.Sequential(
+    [
+        layers.experimental.preprocessing.Normalization(),
+        layers.experimental.preprocessing.Resizing(image_size, image_size),
+        layers.experimental.preprocessing.RandomFlip("horizontal"),
+        layers.experimental.preprocessing.RandomRotation(factor=0.02),
+        layers.experimental.preprocessing.RandomZoom(height_factor=0.2, width_factor=0.2),
+    ],
+    name="data_augmentation",
+)
+# Compute the mean and the variance of the training data for normalization.
+data_augmentation.layers[0].adapt(x_train)
+# Implement multilayer perceptron (MLP)
+def mlp(x, hidden_units, dropout_rate):
+    for units in hidden_units:
+        x = layers.Dense(units, activation=tf.keras.activations.gelu)(x)
+        x = layers.Dropout(dropout_rate)(x)
+    return x
+# Implement patch creation as a layer
+class Patches(layers.Layer):
+    def __init__(self, patch_size):
+        super().__init__()
+        self.patch_size = patch_size
+    def call(self, images):
+        patches = tf.image.extract_patches(
+            images,
+            sizes=[1, self.patch_size, self.patch_size, 1],
+            strides=[1, self.patch_size, self.patch_size, 1],
+            rates=[1, 1, 1, 1],
+            padding="VALID",
+        )
+        batch_size = tf.shape(patches)[0]
+        patches = tf.reshape(
+            patches,
+            (batch_size, -1, self.patch_size * self.patch_size * 3),  # Assuming RGB images
+        )
+        return patches
+# Implement the patch encoding layer
+class PatchEncoder(layers.Layer):
+    def __init__(self, num_patches, projection_dim):
+        super().__init__()
+        self.num_patches = num_patches
+        self.projection = layers.Dense(units=projection_dim)
+        self.position_embedding = layers.Embedding(
+            input_dim=num_patches, output_dim=projection_dim
+        )
+ def call(self, patch):
+        positions = tf.range(start=0, limit=self.num_patches, delta=1)
+        encoded = self.projection(patch) + self.position_embedding(positions)
+        return encoded
+# Build the ViT model
+def create_vit_classifier():
+    inputs = tf.keras.Input(shape=(32, 32, 3))  # Input shape according to your dataset
+    # Augment data.
+    augmented = data_augmentation(inputs)
+    # Create patches.
+    patches = Patches(patch_size)(augmented)
+    # Encode patches.
+    encoded_patches = PatchEncoder(num_patches, projection_dim)(patches)
+ # Create multiple layers of the Transformer block.
+    for _ in range(transformer_layers):
+        # Layer normalization 1.
+        x1 = layers.LayerNormalization(epsilon=1e-6)(encoded_patches)
+        # Create a multi-head attention layer.
+        attention_output = layers.MultiHeadAttention(
+            num_heads=num_heads, key_dim=projection_dim, dropout=0.1
+        )(x1, x1)
+        # Skip connection 1.
+        x2 = layers.Add()([attention_output, encoded_patches])
+        # Layer normalization 2.
+        x3 = layers.LayerNormalization(epsilon=1e-6)(x2)
+        # MLP.
+        x3 = mlp(x3, hidden_units=transformer_units, dropout_rate=0.1)
+        # Skip connection 2.
+        encoded_patches = layers.Add()([x3, x2])
+ # Create a [batch_size, projection_dim] tensor.
+    representation = layers.LayerNormalization(epsilon=1e-6)(encoded_patches)
+    representation = layers.Flatten()(representation)
+    representation = layers.Dropout(0.5)(representation)
+    # Add MLP.
+    features = mlp(representation, hidden_units=mlp_head_units, dropout_rate=0.5)
+    # Classify outputs.
+    logits = layers.Dense(2)(features)  # Output dimension 2 for binary classification
+    # Create the Keras model.
+    model = tf.keras.Model(inputs=inputs, outputs=logits)
+    return model
+# Compile, train, and evaluate the model
+def run_experiment(model, x_train, y_train):
+    optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
+  model.compile(
+        optimizer=optimizer,
+        loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+        metrics=[
+            tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy"),
+            tf.keras.metrics.SparseTopKCategoricalAccuracy(5, name="top-5-accuracy"),
+        ],
+    ) checkpoint_dir = r"C:\Users\Narayana murthy\PycharmProjects\pythonProject3\5y9wdsg2zt-2\checkpoints"
+    os.makedirs(checkpoint_dir, exist_ok=True)  # Create directory if not exists
+    checkpoint_filepath = os.path.join(checkpoint_dir, "checkpoint.weights.h5")
+ checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+        checkpoint_filepath,
+        monitor="val_accuracy",
+        save_best_only=True,
+        save_weights_only=True,
+    )
+
+    history = model.fit(
+        x=x_train,
+        y=y_train,
+        batch_size=batch_size,
+        epochs=num_epochs,
+        validation_split=0.1,
+        callbacks=[checkpoint_callback],
+    )
+model.load_weights(checkpoint_filepath)
+
+ 
+                   Prediction Functions
+import cv2
+import numpy as np
+import tensorflow as tf
+def predict_image(model, image_path):
+    image = cv2.imread(image_path)
+    image = cv2.resize(image, (32, 32))  # Resize the image to 32x32
+    image = np.expand_dims(image, axis=0)  # Add batch dimension
+    prediction = model.predict(image)
+    return prediction
+def interpret_predictions(prediction):
+    if prediction[0][0] > prediction[0][1]:
+        return "No Crack"
+    else:
+        return "Crack"
+
+if __name__ == "__main__":
+    # Load the model
+    vit_classifier = tf.keras.models.load_model(r"C:\Users\Narayana murthy\PycharmProjects\pythonProject3\5y9wdsg2zt-2\savedmodel")
+ image_url = r"C:\Users\Narayana murthy\Pictures\images2.jpg"
+ # Predictions for the image
+    image_prediction = predict_image(vit_classifier, image_url)
+# Interpret the predictions
+    image_label = interpret_predictions(image_prediction)
+ # Print the interpretation
+    print("Image prediction:", image_label)
+
+
+                     Image Processing and Crack Classification
+import cv2
+import numpy as np
+def classify_crack(image_path):
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+ # Apply edge detection
+    edges = cv2.Canny(image, threshold1=30, threshold2=100)
+ # Find contours of edges
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+  # Iterate through contours to find the width of cracks
+    crack_widths = []
+    for contour in contours:
+        # Find the bounding box of the contour
+        x, y, w, h = cv2.boundingRect(contour)
+        # Add the width of the bounding box (crack width) to the list
+        crack_widths.append(w)
+ # Calculate the average crack width
+    average_crack_width = np.mean(crack_widths)
+    return average_crack_width
+if __name__ == "__main__":
+    # Load the image
+    image_path = r"C:\Users\Narayana murthy\PycharmProjects\pythonProject3\5y9wdsg2zt-2\5y9wdsg2zt-2\Concrete Crack Images for Classification\Positive\00005.jpg"
+ # Classify crack based on width
+    average_crack_width = classify_crack(image_path)
+# Print the average crack width
+    print("Average Crack Width:", average_crack_width)
+
+                  Material Recommendation
+def recommend_materials(crack_width):
+    if crack_width < 0.2:
+        return "Epoxy injections or low-viscosity sealants"
+    elif 0.2 <= crack_width < 0.5:
+        return "Low-viscosity sealants or specialized crack repair products"
+    elif 0.5 <= crack_width < 1.5:
+        return "Epoxy injections or flexible sealants"
+    elif 1.5 <= crack_width < 3:
+        return "Epoxy injections or polymer-based sealants"
+    elif 3 <= crack_width < 5:
+        return "Reapply sealants or use flexible sealants"
+    elif 5 <= crack_width < 8:
+        return "Apply epoxy injections or high-performance sealants"
+    elif 8 <= crack_width < 10:
+        return "Structural reinforcement techniques"
+    elif 10 <= crack_width < 12:
+        return "Epoxy injections or polyurethane foam injections"
+    else:
+        return "Thorough structural assessment and advanced repair methods"
+if __name__ == "__main__":
+    # Example usage
+    crack_width = 2.5
+    recommendation = recommend_materials(crack_width)
+    print("Recommended Materials:", recommendation)
+
+                  Deployment  
+
+app.py
+import os 
+import cv2
+import numpy as np
+import tensorflow as tf 
+from flask import Flask, request, render_template app = Flask(__name__) 
+loaded_model = tf.saved_model.load(r"C:\Users\Narayana murthy\PycharmProjects\pythonProject3\5y9wdsg2zt-2\wepage\savedmodel") 
+# Define classes classes = ["Negative", "Positive"]
+# Load the model vit_classifier = tf.keras.models.load_model(r"C:\Users\Narayana murthy\PycharmProjects\pythonProject3\5y9wdsg2zt-2\wepage") 
+# Define a function to interpret the predictions def interpret_predictions(prediction):     
+     if prediction[0][0] > prediction[0][1]:         
+                    return "No Crack"     
+     else:        
+         return "Crack" 
+# Define the predict_image function
+# Define the predict_image function 
+def predict_image(image_url):     
+    image = cv2.imread(image_url)     
+    image = cv2.resize(image, (32, 32))  
+# Resize the image to 32x32     
+    image = np.expand_dims(image, axis=0)  
+# Add batch dimension     
+    prediction = loaded_model(image)  
+# Use the loaded model for prediction     
+    return interpret_predictions(prediction) 
+# Define the crack classification function 
+def classify_crack(image_path):     
+     image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)     
+     edges = cv2.Canny(image, threshold1=30, threshold2=100)     
+     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)     
+     crack_widths = [cv2.boundingRect(contour)[2] for contour in contours]     
+     average_crack_width = np.mean(crack_widths)     
+      return average_crack_width
+# Define the material recommendation function 
+def recommend_materials(crack_width):     
+       if crack_width < 0.2:         
+             return "Epoxy injections or low-viscosity sealants"     
+       elif 0.2 <= crack_width < 0.5:         
+            return "Low-viscosity sealants or specialized crack repair products"     
+       elif 0.5 <= crack_width < 1.5:         
+            return "Epoxy injections or flexible sealants"     
+       elif 1.5 <= crack_width < 3:         
+            return "Epoxy injections or polymer-based sealants"     
+       elif 3 <= crack_width < 5:         
+            return "Reapply sealants or use flexible sealants"     
+       elif 5 <= crack_width < 8:         
+            return "Apply epoxy injections or high-performance sealants"     
+       elif 8 <= crack_width < 10:         
+            return "Structural reinforcement techniques"    
+       elif 10 <= crack_width < 12:         
+            return "Epoxy injections or polyurethane foam injections"     
+       else:         
+            return "Thorough structural assessment and advanced repair methods" 
+# Home route @app.route('/') 
+def home():     
+     return render_template('index.html') 
+# Route to upload image and process 
+@app.route('/upload', methods=['POST']) 
+def upload_image():     
+if 'file' not in request.files:         
+     return 'No file part'       
+uploaded_file = request.files['file']     
+if uploaded_file.filename == '':         
+return 'No selected file'  
+if uploaded_file:         
+image_path = "temp_image.jpg" 
+# Save the uploaded image temporarily         
+uploaded_file.save(image_path)         
+# Predict if the image contains a crack or not         
+prediction = predict_image(image_path)         
+# Classify crack and recommend materials         
+crack_width = classify_crack(image_path)         
+recommendation = recommend_materials(crack_width)        
+return render_template('result.html', prediction=prediction, crack_width=crack_width, recommendation=recommendation) if __name__ == '__main__':     app.run(debug=True)
+
+
+Index.html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crack Detection System</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-image: url('C:\Users\Narayana murthy\Pictures\wallpapercrack.jpg'); 
+            background-size: cover;
+            background-position: center;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        form {
+            max-width: 400px;
+            margin: 0 auto;
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        input[type="file"] {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <h1>Crack Detection System</h1>
+    <form action="/upload" method="post" enctype="multipart/form-data">
+        <input type="file" name="file" accept="image/*" required>
+        <button type="submit">Upload Image</button>
+    </form>
+</body>
+</html>
+
+Result.html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crack Detection Result</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+            padding: 20px;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        .result {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        p {
+            margin-bottom: 10px;
+        }
+        a {
+            display: block;
+            text-align: center;
+            color: #007bff;
+            text-decoration: none;
+            margin-top: 20px;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <h1>Crack Detection Result</h1>
+    <div class="result">
+        <p><strong>Prediction:</strong> {{ prediction }}</p>
+        <p><strong>Crack Width:</strong> {{ crack_width }}</p>
+        <p><strong>Recommended Materials:</strong> {{ recommendation }}</p>
+    </div>
+    <a href="/">Back to Home</a>
+</body>
+</html> 
+
